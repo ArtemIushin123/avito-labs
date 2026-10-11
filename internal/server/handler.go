@@ -234,7 +234,11 @@ func checkKeys(raw []byte, allowed map[string]bool) (map[string]json.RawMessage,
 	var m map[string]json.RawMessage
 
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("invalid json: %w", err)
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return nil, errors.New("must be a JSON object")
+		}
+		return nil, errors.New("malformed JSON")
 	}
 
 	for k := range m {

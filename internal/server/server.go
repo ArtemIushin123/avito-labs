@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -31,7 +32,14 @@ func NewServer(h *Handler, c *config.Config) *http.Server {
 }
 
 func ErrorHandlerFunc(w http.ResponseWriter, r *http.Request, err error) {
-	SolveProblem(w, r, "invalid_request", err.Error(),
+	detail := "invalid request parameters"
+
+	var paramErr *api.InvalidParamFormatError
+	if errors.As(err, &paramErr) {
+		detail = paramErr.ParamName + " has invalid format"
+	}
+
+	SolveProblem(w, r, "invalid_request", detail,
 		http.StatusBadRequest, "Invalid request", "https://tripgo.example/problems/invalid-request",
 	)
 }
