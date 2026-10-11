@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	api "github.com/ArtemIushin123/template/internal/generated"
@@ -31,7 +32,8 @@ var ErrTripCompleted = errors.New("trip already completed")
 func NewTripRepository(pool *pgxpool.Pool) *TripRepository {
 	return &TripRepository{
 		pool:    pool,
-		builder: squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)}
+		builder: squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar),
+	}
 }
 
 func (tr *TripRepository) getExecutor(ctx context.Context) Executor {
@@ -44,6 +46,7 @@ func (tr *TripRepository) getExecutor(ctx context.Context) Executor {
 
 func (tr *TripRepository) GetByID(ctx context.Context, id api.TripId) (*api.Trip, error) {
 	executor := tr.getExecutor(ctx)
+
 	query, args, err := tr.builder.
 		Select(
 			"id", "user_id", "driver_id", "start_latitude", "start_longitude",
@@ -53,8 +56,9 @@ func (tr *TripRepository) GetByID(ctx context.Context, id api.TripId) (*api.Trip
 		Where(squirrel.Eq{"id": id}).
 		ToSql()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build get trip query: %w", err)
 	}
+
 	var (
 		tripID                        openapi_types.UUID
 		userID, driverID              openapi_types.UUID
@@ -65,8 +69,8 @@ func (tr *TripRepository) GetByID(ctx context.Context, id api.TripId) (*api.Trip
 		startedAt                     time.Time
 		finishedAt                    *time.Time
 	)
-	row := executor.QueryRow(ctx, query, args...)
-	err = row.Scan(
+
+	err = executor.QueryRow(ctx, query, args...).Scan(
 		&tripID, &userID, &driverID, &startLatitude, &startLongitude,
 		&endLatitude, &endLongitude, &price, &status, &startedAt, &finishedAt,
 	)
@@ -74,8 +78,9 @@ func (tr *TripRepository) GetByID(ctx context.Context, id api.TripId) (*api.Trip
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrTripNotFound
 		}
-		return nil, err
+		return nil, fmt.Errorf("get trip: %w", err)
 	}
+
 	return &api.Trip{
 		Id:       tripID,
 		UserId:   userID,
@@ -97,6 +102,7 @@ func (tr *TripRepository) GetByID(ctx context.Context, id api.TripId) (*api.Trip
 
 func (tr *TripRepository) Create(ctx context.Context, trip api.Trip) error {
 	executor := tr.getExecutor(ctx)
+
 	query, args, err := tr.builder.
 		Insert("trips").
 		Columns(
@@ -109,18 +115,17 @@ func (tr *TripRepository) Create(ctx context.Context, trip api.Trip) error {
 		).
 		ToSql()
 	if err != nil {
-		return err
+		return fmt.Errorf("build create trip query: %w", err)
 	}
-	_, err = executor.Exec(ctx, query, args...)
-	var pgErr *pgconn.PgError
-	if err != nil {
-		if errors.As(err, &pgErr) {
-			if pgErr.Code == "23505" {
-				return ErrDriverBusy
-			}
+
+	if _, err = executor.Exec(ctx, query, args...); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrDriverBusy
 		}
-		return err
+		return fmt.Errorf("create trip: %w", err)
 	}
+
 	return nil
 }
 
@@ -132,30 +137,27 @@ func (tr *TripRepository) AddStatusHistory(
 	reason *string,
 ) error {
 	executor := tr.getExecutor(ctx)
+
 	query, args, err := tr.builder.
 		Insert("trip_status_history").
-		Columns(
-			"trip_id", "from_status",
-			"to_status", "reason",
-		).
-		Values(
-			tripId, fromStatus,
-			toStatus, reason,
-		).
+		Columns("trip_id", "from_status", "to_status", "reason").
+		Values(tripId, fromStatus, toStatus, reason).
 		ToSql()
 	if err != nil {
-		return err
+		return fmt.Errorf("build add status history query: %w", err)
 	}
-	_, err = executor.Exec(ctx, query, args...)
-	if err != nil {
-		return err
+
+	if _, err = executor.Exec(ctx, query, args...); err != nil {
+		return fmt.Errorf("add status history: %w", err)
 	}
+
 	return nil
 }
 
 func (tr *TripRepository) Finish(ctx context.Context, id api.TripId) (*api.Trip, error) {
 	executor := tr.getExecutor(ctx)
 	now := time.Now().UTC()
+
 	query, args, err := tr.builder.
 		Update("trips").
 		Set("status", api.Completed).
@@ -167,21 +169,25 @@ func (tr *TripRepository) Finish(ctx context.Context, id api.TripId) (*api.Trip,
 		}).
 		ToSql()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build finish trip query: %w", err)
 	}
+
 	tag, err := executor.Exec(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("finish trip: %w", err)
 	}
+
 	if tag.RowsAffected() == 0 {
 		if _, err := tr.GetByID(ctx, id); err != nil {
 			return nil, err
 		}
 		return nil, ErrTripCompleted
 	}
+
 	trip, err := tr.GetByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read finished trip: %w", err)
 	}
+
 	return trip, nil
 }

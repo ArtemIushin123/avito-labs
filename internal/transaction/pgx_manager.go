@@ -26,14 +26,17 @@ func (ptm *PgxTxManager) Do(ctx context.Context, fn func(context.Context) error)
 	if _, ok := CheckTransaction(ctx); ok {
 		return fn(ctx)
 	}
+
 	tx, err := ptm.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
 	if err := fn(context.WithValue(ctx, txKey, tx)); err != nil {
 		return err
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}

@@ -2,21 +2,23 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/ArtemIushin123/template/internal/config"
 	api "github.com/ArtemIushin123/template/internal/generated"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 func NewServer(h *Handler, c *config.Config) *http.Server {
 	router := chi.NewRouter()
-	router.Use(middleware.Recoverer)
+	router.Use(recoverer)
 	handler := api.HandlerWithOptions(h, api.ChiServerOptions{
 		BaseRouter:       router,
 		ErrorHandlerFunc: ErrorHandlerFunc,
 	})
+
 	server := &http.Server{
 		Addr:              c.HTTPAddr,
 		Handler:           handler,
@@ -43,10 +45,32 @@ func SolveProblem(w http.ResponseWriter, r *http.Request, code string, detail st
 		Title:    title,
 		Type:     errorType,
 	}
+
 	if detail != "" {
 		response.Detail = &detail
 	}
+
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func recoverer(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			fmt.Println("panic recovered:", rec, "\n", string(debug.Stack()))
+			SolveProblem(w, r, "internal_error", "", http.StatusInternalServerError,
+				"Internal error", "https://tripgo.example/problems/internal-error")
+		}()
+
+		next.ServeHTTP(w, r)
+	})
 }
