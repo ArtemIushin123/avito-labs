@@ -81,8 +81,8 @@ type Trip struct {
 	DriverId openapi_types.UUID `json:"driver_id"`
 
 	// EndPoint Географические координаты WGS 84.
-	EndPoint       Coordinates        `json:"end_point"`
-	FinishedAt     *time.Time         `json:"finished_at,omitempty"`
+	EndPoint   Coordinates `json:"end_point"`
+	FinishedAt *time.Time  `json:"finished_at,omitempty"`
 	Id             openapi_types.UUID `json:"id"`
 	LastPositionAt *time.Time         `json:"last_position_at,omitempty"`
 
