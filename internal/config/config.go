@@ -15,6 +15,7 @@ type Config struct {
 	HTTPIdleTimeout       time.Duration `env:"HTTP_IDLE_TIMEOUT" env-required:"true"`
 
 	LogLevel        string        `env:"LOG_LEVEL" env-required:"true"`
+	OtelServiceName string        `env:"OTEL_SERVICE_NAME" env-default:"trip-service"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" env-required:"true"`
 
 	DatabaseURL             string        `env:"DATABASE_URL" env-required:"true"`

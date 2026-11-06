@@ -8,9 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var _ TxManager = (*PgxTxManager)(nil)
-
-type PgxTxManager struct {
+type Manager struct {
 	pool *pgxpool.Pool
 }
 
@@ -18,16 +16,16 @@ type txKeyType struct{}
 
 var txKey = txKeyType{}
 
-func NewPgxTxManager(pool *pgxpool.Pool) *PgxTxManager {
-	return &PgxTxManager{pool: pool}
+func New(pool *pgxpool.Pool) *Manager {
+	return &Manager{pool: pool}
 }
 
-func (ptm *PgxTxManager) Do(ctx context.Context, fn func(context.Context) error) error {
+func (m *Manager) Do(ctx context.Context, fn func(context.Context) error) error {
 	if _, ok := CheckTransaction(ctx); ok {
 		return fn(ctx)
 	}
 
-	tx, err := ptm.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
