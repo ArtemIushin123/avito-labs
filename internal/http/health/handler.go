@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ArtemIushin123/template/internal/generated"
+	"github.com/ArtemIushin123/template/internal/http/domainerror"
 )
 
 type Handler struct {
@@ -27,6 +28,7 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := h.db.Ping(ctx); err != nil {
+		domainerror.SetRequestError(ctx, err)
 		writeStatus(w, http.StatusServiceUnavailable, api.Unavailable)
 		return
 	}

@@ -1,6 +1,7 @@
 package router_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,7 +13,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/ArtemIushin123/template/internal/domain/trip"
 	api "github.com/ArtemIushin123/template/internal/generated"
@@ -63,7 +73,15 @@ type fakePinger struct{}
 func (fakePinger) Ping(context.Context) error { return nil }
 
 func newRouter(uc *fakeUsecases) http.Handler {
-	httpMetrics, err := middleware.NewMetrics(noop.NewMeterProvider().Meter("test"))
+	return newRouterWithLogger(uc, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func newRouterWithLogger(uc *fakeUsecases, logger *slog.Logger) http.Handler {
+	return newRouterWithMeter(uc, logger, noop.NewMeterProvider().Meter("test"))
+}
+
+func newRouterWithMeter(uc *fakeUsecases, logger *slog.Logger, meter metric.Meter) http.Handler {
+	httpMetrics, err := middleware.NewMetrics(meter)
 	if err != nil {
 		panic(err)
 	}
@@ -72,7 +90,7 @@ func newRouter(uc *fakeUsecases) http.Handler {
 		get.New(uc),
 		finish.New(uc),
 		health.New(fakePinger{}, time.Second),
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		logger,
 		httpMetrics,
 	)
 }
@@ -151,10 +169,86 @@ func TestRouter_InvalidTripID(t *testing.T) {
 	}
 }
 
-func TestRouter_PanicIsRecovered(t *testing.T) {
-	w := serve(newRouter(&fakeUsecases{panic: true}), http.MethodGet, tripsPath+"/"+tripID.String(), "")
+func TestRouter_MeasuresInvalidTripID(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	uc := &fakeUsecases{}
+	h := newRouterWithMeter(uc, slog.New(slog.NewTextHandler(io.Discard, nil)), provider.Meter("test"))
+	w := serve(h, http.MethodGet, tripsPath+"/not-a-uuid", "")
+	if w.Code != http.StatusBadRequest || uc.called != "" {
+		t.Fatalf("status = %d, usecase = %q, want 400 before usecase", w.Code, uc.called)
+	}
 
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &rm); err != nil {
+		t.Fatalf("collect metrics: %v", err)
+	}
+	for _, scope := range rm.ScopeMetrics {
+		for _, measurement := range scope.Metrics {
+			if measurement.Name != "http.server.request.duration" {
+				continue
+			}
+			hist, ok := measurement.Data.(metricdata.Histogram[float64])
+			if !ok || len(hist.DataPoints) != 1 || hist.DataPoints[0].Count != 1 {
+				t.Fatalf("want one duration measurement, got %+v", measurement.Data)
+			}
+			attrs := hist.DataPoints[0].Attributes
+			route, _ := attrs.Value("http.route")
+			status, _ := attrs.Value("http.response.status_code")
+			if route.AsString() != tripsPath+"/{tripId}" || status.AsInt64() != http.StatusBadRequest {
+				t.Errorf("http.route = %v, http.response.status_code = %v, want trip template and 400", route, status)
+			}
+			return
+		}
+	}
+	t.Fatal("missing HTTP duration for invalid trip ID")
+}
+
+type requestLogHandler struct {
+	slog.Handler
+	spanContext trace.SpanContext
+}
+
+func (h *requestLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.spanContext = trace.SpanContextFromContext(ctx)
+	return h.Handler.Handle(ctx, record)
+}
+
+func TestRouter_PanicIsRecovered(t *testing.T) {
+	spans := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	originalProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(originalProvider) })
+
+	var logs bytes.Buffer
+	logHandler := &requestLogHandler{Handler: slog.NewJSONHandler(&logs, nil)}
+	h := newRouterWithLogger(&fakeUsecases{panic: true}, slog.New(logHandler))
+	w := serve(h, http.MethodGet, tripsPath+"/"+tripID.String(), "")
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", w.Code)
+	}
+
+	var record struct {
+		Status int `json:"status"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &record); err != nil || record.Status != http.StatusInternalServerError {
+		t.Fatalf("want one request log with status 500, got %q", logs.String())
+	}
+
+	ended := spans.Ended()
+	if len(ended) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(ended))
+	}
+	span := ended[0]
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want Error", span.Status())
+	}
+	attrs := attribute.NewSet(span.Attributes()...)
+	if status, ok := attrs.Value("http.response.status_code"); !ok || status.AsInt64() != http.StatusInternalServerError {
+		t.Errorf("span response status = %v, want 500", status)
+	}
+	if !logHandler.spanContext.IsValid() || !logHandler.spanContext.Equal(span.SpanContext()) {
+		t.Errorf("log span context = %v, want HTTP span context %v", logHandler.spanContext, span.SpanContext())
 	}
 }

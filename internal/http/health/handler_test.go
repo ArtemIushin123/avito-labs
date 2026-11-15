@@ -1,9 +1,11 @@
 package health_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +15,7 @@ import (
 
 	api "github.com/ArtemIushin123/template/internal/generated"
 	"github.com/ArtemIushin123/template/internal/http/health"
+	"github.com/ArtemIushin123/template/internal/http/middleware"
 )
 
 const pingTimeout = time.Second
@@ -50,9 +53,27 @@ func TestHandler_Ready(t *testing.T) {
 			})
 
 			w := httptest.NewRecorder()
-			health.New(db, pingTimeout).Ready(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, nil))
+			h := middleware.Logging(logger)(http.HandlerFunc(health.New(db, pingTimeout).Ready))
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ready", nil))
 
 			assertHealth(t, w, tt.wantCode, tt.wantStatus)
+
+			var record struct {
+				Status int    `json:"status"`
+				Error  string `json:"error"`
+			}
+			if err := json.Unmarshal(logs.Bytes(), &record); err != nil {
+				t.Fatalf("decode readiness log: %v", err)
+			}
+			wantError := ""
+			if tt.pingErr != nil {
+				wantError = tt.pingErr.Error()
+			}
+			if record.Status != tt.wantCode || record.Error != wantError {
+				t.Errorf("readiness log = %+v, want status %d and error %q", record, tt.wantCode, wantError)
+			}
 		})
 	}
 }

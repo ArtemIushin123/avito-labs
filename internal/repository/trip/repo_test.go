@@ -169,7 +169,7 @@ func TestRepository_Create_DuplicateIDIsNotDriverBusy(t *testing.T) {
 func TestRepository_Create_DriverFreeAfterFinish(t *testing.T) {
 	pool := pgtest.Pool(t)
 	repo := triprepo.New(pool, pgtest.QueryTimeout)
-	txm := transaction.New(pool)
+	txm := transaction.New(pool, pgtest.QueryTimeout)
 
 	first := pgtest.NewTrip(t)
 	second := pgtest.NewTrip(t)
@@ -189,7 +189,7 @@ func TestRepository_Create_DriverFreeAfterFinish(t *testing.T) {
 func TestRepository_Save(t *testing.T) {
 	pool := pgtest.Pool(t)
 	repo := triprepo.New(pool, pgtest.QueryTimeout)
-	txm := transaction.New(pool)
+	txm := transaction.New(pool, pgtest.QueryTimeout)
 
 	want := pgtest.NewTrip(t)
 	pgtest.DeleteTrips(t, pool, want.ID)
@@ -284,7 +284,7 @@ func (noEvents) TripCompleted(context.Context, *trip.Trip) {}
 func TestFinish_Concurrent(t *testing.T) {
 	pool := pgtest.Pool(t)
 	repo := triprepo.New(pool, pgtest.QueryTimeout)
-	txm := transaction.New(pool)
+	txm := transaction.New(pool, pgtest.QueryTimeout)
 	uc := finish.New(repo, txm, noEvents{}, func() time.Time { return time.Now().UTC().Truncate(time.Microsecond) })
 
 	tr := pgtest.NewTrip(t)

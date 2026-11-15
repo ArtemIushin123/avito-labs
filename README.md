@@ -101,6 +101,7 @@ make test-integration
 | `DATABASE_MAX_CONN_LIFETIME` | время жизни соединения в пуле |
 | `DATABASE_CONNECT_TIMEOUT` | таймаут подключения, Ping на старте и в `/ready` |
 | `DATABASE_QUERY_TIMEOUT` | таймаут одного запроса в БД |
+| `DATABASE_TRANSACTION_TIMEOUT` | общий бюджет от ожидания соединения до коммита транзакции |
 | `OTEL_SERVICE_NAME` | `service.name` в телеметрии и поле `service` в логах, по умолчанию `trip-service` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | адрес коллектора, приходит из `.env` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` или `http/protobuf` |
@@ -225,19 +226,23 @@ go list -deps ./internal/domain/... | grep -E 'jackc/pgx|go-chi|net/http' && ech
 ### Middleware
 
 ```
-Recover → Tracing → Logging → Metrics → роутер
+Tracing → Logging → Recover → Metrics → роутер
 ```
 
-- **Recover** ловит панику, пишет `Error` со стектрейсом, отдаёт `500 internal_error`.
-  `http.ErrAbortHandler` пробрасывает дальше, как это делает `net/http`.
+- **Recover** ловит панику и до отправки ответа может вернуть `500 internal_error`.
+  Ошибка и стек попадают в итоговый лог. `http.ErrAbortHandler` пробрасывается дальше.
 - **Tracing** — `otelhttp`, корневой спан на запрос. После роутинга спан переименовывается
   в `{method} {route}` (`POST /api/v1/trips`) и получает `http.route` с шаблоном.
   Собственные метрики `otelhttp` отключены, чтобы не дублировать наши.
 - **Logging** — одна запись `request handled` на запрос, когда ответ готов: `method`,
   `route` (шаблон), `status`, `duration_ms`. `Info` для `2xx`/`4xx`, `Error` для `5xx`.
   Тела запроса и ответа не логируются.
-- **Metrics** — подключена как middleware сгенерированного роутера, поэтому шаблон
-  маршрута уже известен.
+- **Metrics** оборачивает весь роутер chi, включая ответы `400`, `404` и `405`.
+  Перед обработкой ищет шаблон по дереву chi. Неизвестный путь получает метку
+  `unmatched`, нестандартный метод — `OTHER`.
+
+После ревью `Recover` перенесён внутрь `Tracing` и `Logging`: он получает контекст
+со спаном и слотом ошибки, а внешние обёртки видят ответ `500` после восстановления.
 
 ### Метрики
 
@@ -245,7 +250,7 @@ Recover → Tracing → Logging → Metrics → роутер
 |---|---|---|---|
 | `http.server.request.duration` | histogram, с | `http.request.method`, `http.route`, `http.response.status_code` | `middleware.NewMetrics` |
 | `http.server.active_requests` | up-down counter | `http.request.method`, `http.route` | `middleware.NewMetrics` |
-| `db.client.operation.duration` | histogram, с | `db.operation.name`, `db.collection.name`, `error.type` | `otelpgx` на уровне пула |
+| `db.client.operation.duration` | histogram, с | `db.system.name`, `db.operation.name`, `db.collection.name`, `error.type` | обёртка над `otelpgx` на уровне пула |
 | `tripgo.trips.created` | counter | — | `telemetry.TripEvents`, после коммита |
 | `tripgo.trips.completed` | counter | — | `telemetry.TripEvents`, после коммита |
 
@@ -266,6 +271,8 @@ Recover → Tracing → Logging → Metrics → роутер
 
 - Корневой спан — входящий HTTP-запрос.
 - Каждый запрос в БД — дочерний спан от `otelpgx`, подключённого как `Tracer` пула pgx.
+  Обёртка добавляет имя таблицы в SQL-спан и гистограмму, а при ошибке — тип ошибки
+  (SQLSTATE для ошибок PostgreSQL).
   Инструментирование на уровне пула, а не в методах репозитория: ни один запрос не
   забудут обернуть, а репозиторий не зависит от телеметрии.
 - Ошибка `5xx` помечает спан `codes.Error` и пишет `error.type`.

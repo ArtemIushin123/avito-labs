@@ -3,8 +3,10 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -30,8 +32,8 @@ func NewMetrics(meter metric.Meter) (func(http.Handler) http.Handler, error) {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-			method := attribute.String("http.request.method", r.Method)
-			route := attribute.String("http.route", routePattern(r))
+			method := attribute.String("http.request.method", metricMethod(r.Method))
+			route := attribute.String("http.route", metricRoutePattern(r))
 
 			active.Add(ctx, 1, metric.WithAttributes(method, route))
 			rec := &statusRecorder{ResponseWriter: w}
@@ -54,4 +56,49 @@ func NewMetrics(meter metric.Meter) (func(http.Handler) http.Handler, error) {
 			finished = true
 		})
 	}, nil
+}
+
+var standardHTTPMethods = [...]string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+	http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace,
+}
+
+func metricMethod(method string) string {
+	if slices.Contains(standardHTTPMethods[:], method) {
+		return method
+	}
+	return "OTHER"
+}
+
+func metricRoutePattern(r *http.Request) string {
+	routeCtx := chi.RouteContext(r.Context())
+	if routeCtx == nil || routeCtx.Routes == nil {
+		return unmatchedRoute
+	}
+
+	path := routeCtx.RoutePath
+	if path == "" {
+		path = r.URL.RawPath
+	}
+	if path == "" {
+		path = r.URL.Path
+	}
+	if path == "" {
+		path = "/"
+	}
+
+	candidate := chi.NewRouteContext()
+	if pattern := routeCtx.Routes.Find(candidate, r.Method, path); pattern != "" {
+		return pattern
+	}
+	for _, method := range standardHTTPMethods {
+		if method == r.Method {
+			continue
+		}
+		candidate.Reset()
+		if pattern := routeCtx.Routes.Find(candidate, method, path); pattern != "" {
+			return pattern
+		}
+	}
+	return unmatchedRoute
 }

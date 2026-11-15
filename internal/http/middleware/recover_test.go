@@ -3,7 +3,6 @@ package middleware_test
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,17 +13,13 @@ import (
 	"github.com/ArtemIushin123/template/internal/http/middleware"
 )
 
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
-
 func TestRecover_Panic(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 
-	h := middleware.Recover(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := middleware.Logging(logger)(middleware.Recover(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("db password is s3cret")
-	}))
+	})))
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/trips", nil))
@@ -50,8 +45,9 @@ func TestRecover_Panic(t *testing.T) {
 	if err := json.Unmarshal(logs.Bytes(), &rec); err != nil {
 		t.Fatalf("panic was not logged as one JSON record: %q", logs.String())
 	}
-	if rec["level"] != "ERROR" || rec["msg"] != "panic recovered" {
-		t.Errorf("log = %v, want level ERROR and msg \"panic recovered\"", rec)
+	if rec["level"] != "ERROR" || rec["msg"] != "request handled" ||
+		rec["status"] != float64(http.StatusInternalServerError) || rec["error"] != "panic: db password is s3cret" {
+		t.Errorf("log = %v, want an ERROR request log with status 500 and the panic cause", rec)
 	}
 	if stack, _ := rec["stack"].(string); !strings.Contains(stack, "goroutine") {
 		t.Errorf("log has no stack trace: %v", rec["stack"])
@@ -59,7 +55,7 @@ func TestRecover_Panic(t *testing.T) {
 }
 
 func TestRecover_NoPanic(t *testing.T) {
-	h := middleware.Recover(discardLogger())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := middleware.Recover(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	}))
 
@@ -72,7 +68,7 @@ func TestRecover_NoPanic(t *testing.T) {
 }
 
 func TestRecover_ErrAbortHandlerIsRepanicked(t *testing.T) {
-	h := middleware.Recover(discardLogger())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := middleware.Recover(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic(http.ErrAbortHandler)
 	}))
 

@@ -72,6 +72,12 @@ func WriteInvalidRequest(w http.ResponseWriter, r *http.Request, detail string) 
 	write(w, r, status, body)
 }
 
+func SetRequestError(ctx context.Context, err error) {
+	if slot, ok := ctx.Value(errorSlotKey{}).(*errorSlot); ok {
+		slot.err = err
+	}
+}
+
 func invalidRequest(detail string) (int, api.Problem) {
 	return problem(http.StatusBadRequest, "invalid_request", "Invalid request", typeInvalidRequest, detail)
 }

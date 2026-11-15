@@ -29,6 +29,9 @@ func Logging(logger *slog.Logger) func(http.Handler) http.Handler {
 				level = slog.LevelError
 				if err := requestErr(); err != nil {
 					attrs = append(attrs, slog.String("error", err.Error()))
+					if panicErr, ok := err.(*panicError); ok {
+						attrs = append(attrs, slog.String("stack", panicErr.stack))
+					}
 				}
 			}
 

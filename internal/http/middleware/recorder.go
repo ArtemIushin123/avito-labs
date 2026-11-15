@@ -9,8 +9,8 @@ import (
 const unmatchedRoute = "unmatched"
 
 func routePattern(r *http.Request) string {
-	if rctx := chi.RouteContext(r.Context()); rctx != nil {
-		if pattern := rctx.RoutePattern(); pattern != "" {
+	if routeCtx := chi.RouteContext(r.Context()); routeCtx != nil {
+		if pattern := routeCtx.RoutePattern(); pattern != "" {
 			return pattern
 		}
 	}

@@ -61,13 +61,13 @@ func New(
 	}
 
 	r := chi.NewRouter()
-	r.Use(middleware.Recover(logger))
 	r.Use(middleware.Tracing())
 	r.Use(middleware.Logging(logger))
+	r.Use(middleware.Recover)
+	r.Use(httpMetrics)
 
 	return api.HandlerWithOptions(s, api.ChiServerOptions{
 		BaseRouter:       r,
-		Middlewares:      []api.MiddlewareFunc{httpMetrics},
 		ErrorHandlerFunc: paramError,
 	})
 }

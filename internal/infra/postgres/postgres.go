@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
 )
 
 type Config struct {
@@ -31,9 +31,11 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	poolConfig.MaxConnLifetime = cfg.MaxConnLifetime
 	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 
-	poolConfig.ConnConfig.Tracer = otelpgx.NewTracer(
-		otelpgx.WithMetricOperationName(otelpgx.SQLOperationName),
-	)
+	tracer, err := newQueryTracer(otel.GetTracerProvider(), otel.GetMeterProvider())
+	if err != nil {
+		return nil, fmt.Errorf("create postgres tracer: %w", err)
+	}
+	poolConfig.ConnConfig.Tracer = tracer
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {

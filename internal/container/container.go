@@ -86,7 +86,7 @@ func build(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*Conta
 		return nil, fmt.Errorf("create http metrics: %w", err)
 	}
 
-	manager := transaction.New(pool)
+	manager := transaction.New(pool, cfg.DatabaseTransactionTimeout)
 	repo := triprepo.New(pool, cfg.DatabaseQueryTimeout)
 
 	createUsecase := ucreate.New(repo, manager, events, now, uuid.New)
