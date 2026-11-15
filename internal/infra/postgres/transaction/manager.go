@@ -3,31 +3,34 @@ package transaction
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var _ TxManager = (*PgxTxManager)(nil)
-
-type PgxTxManager struct {
-	pool *pgxpool.Pool
+type Manager struct {
+	pool               *pgxpool.Pool
+	transactionTimeout time.Duration
 }
 
 type txKeyType struct{}
 
 var txKey = txKeyType{}
 
-func NewPgxTxManager(pool *pgxpool.Pool) *PgxTxManager {
-	return &PgxTxManager{pool: pool}
+func New(pool *pgxpool.Pool, transactionTimeout time.Duration) *Manager {
+	return &Manager{pool: pool, transactionTimeout: transactionTimeout}
 }
 
-func (ptm *PgxTxManager) Do(ctx context.Context, fn func(context.Context) error) error {
+func (m *Manager) Do(ctx context.Context, fn func(context.Context) error) error {
 	if _, ok := CheckTransaction(ctx); ok {
 		return fn(ctx)
 	}
 
-	tx, err := ptm.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	ctx, cancel := context.WithTimeout(ctx, m.transactionTimeout)
+	defer cancel()
+
+	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}

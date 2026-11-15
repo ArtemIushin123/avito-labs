@@ -15,14 +15,16 @@ type Config struct {
 	HTTPIdleTimeout       time.Duration `env:"HTTP_IDLE_TIMEOUT" env-required:"true"`
 
 	LogLevel        string        `env:"LOG_LEVEL" env-required:"true"`
+	OtelServiceName string        `env:"OTEL_SERVICE_NAME" env-default:"trip-service"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" env-required:"true"`
 
-	DatabaseURL             string        `env:"DATABASE_URL" env-required:"true"`
-	DatabaseMaxConns        int32         `env:"DATABASE_MAX_CONNS" env-required:"true"`
-	DatabaseMinConns        int32         `env:"DATABASE_MIN_CONNS" env-required:"true"`
-	DatabaseMaxConnLifetime time.Duration `env:"DATABASE_MAX_CONN_LIFETIME" env-required:"true"`
-	DatabaseConnectTimeout  time.Duration `env:"DATABASE_CONNECT_TIMEOUT" env-required:"true"`
-	DatabaseQueryTimeout    time.Duration `env:"DATABASE_QUERY_TIMEOUT" env-required:"true"`
+	DatabaseURL                string        `env:"DATABASE_URL" env-required:"true"`
+	DatabaseMaxConns           int32         `env:"DATABASE_MAX_CONNS" env-required:"true"`
+	DatabaseMinConns           int32         `env:"DATABASE_MIN_CONNS" env-required:"true"`
+	DatabaseMaxConnLifetime    time.Duration `env:"DATABASE_MAX_CONN_LIFETIME" env-required:"true"`
+	DatabaseConnectTimeout     time.Duration `env:"DATABASE_CONNECT_TIMEOUT" env-required:"true"`
+	DatabaseQueryTimeout       time.Duration `env:"DATABASE_QUERY_TIMEOUT" env-required:"true"`
+	DatabaseTransactionTimeout time.Duration `env:"DATABASE_TRANSACTION_TIMEOUT" env-required:"true"`
 }
 
 func Load() (*Config, error) {
@@ -52,6 +54,7 @@ func validate(config *Config) error {
 		{"DATABASE_MAX_CONN_LIFETIME", config.DatabaseMaxConnLifetime},
 		{"DATABASE_CONNECT_TIMEOUT", config.DatabaseConnectTimeout},
 		{"DATABASE_QUERY_TIMEOUT", config.DatabaseQueryTimeout},
+		{"DATABASE_TRANSACTION_TIMEOUT", config.DatabaseTransactionTimeout},
 	}
 
 	for _, c := range checks {
