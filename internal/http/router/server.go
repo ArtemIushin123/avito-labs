@@ -1,0 +1,100 @@
+package router
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
+	api "github.com/ArtemIushin123/template/internal/generated"
+	"github.com/ArtemIushin123/template/internal/http/domainerror"
+	"github.com/ArtemIushin123/template/internal/http/health"
+	"github.com/ArtemIushin123/template/internal/http/middleware"
+	positioncreate "github.com/ArtemIushin123/template/internal/http/position/create"
+	positionlist "github.com/ArtemIushin123/template/internal/http/position/list"
+	"github.com/ArtemIushin123/template/internal/http/trip/create"
+	"github.com/ArtemIushin123/template/internal/http/trip/finish"
+	"github.com/ArtemIushin123/template/internal/http/trip/get"
+)
+
+type server struct {
+	createTrip     *create.Handler
+	getTrip        *get.Handler
+	finishTrip     *finish.Handler
+	createPosition *positioncreate.Handler
+	listPositions  *positionlist.Handler
+	health         *health.Handler
+}
+
+var _ api.ServerInterface = (*server)(nil)
+
+func (s *server) CreateTrip(w http.ResponseWriter, r *http.Request, params api.CreateTripParams) {
+	s.createTrip.CreateTrip(w, r, params)
+}
+
+func (s *server) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
+	s.getTrip.GetTrip(w, r, tripId)
+}
+
+func (s *server) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
+	s.finishTrip.FinishTrip(w, r, tripId)
+}
+
+func (s *server) CreateTripPosition(w http.ResponseWriter, r *http.Request, id api.TripId) {
+	s.createPosition.CreateTripPosition(w, r, id)
+}
+
+func (s *server) ListTripPositions(w http.ResponseWriter, r *http.Request, id api.TripId) {
+	s.listPositions.ListTripPositions(w, r, id)
+}
+
+func (s *server) Health(w http.ResponseWriter, r *http.Request) {
+	s.health.Health(w, r)
+}
+
+func (s *server) Ready(w http.ResponseWriter, r *http.Request) {
+	s.health.Ready(w, r)
+}
+
+func New(
+	createH *create.Handler,
+	getH *get.Handler,
+	finishH *finish.Handler,
+	positionH *positioncreate.Handler,
+	listPositionsH *positionlist.Handler,
+	healthH *health.Handler,
+	logger *slog.Logger,
+	httpMetrics func(http.Handler) http.Handler,
+) http.Handler {
+	s := &server{
+		createTrip:     createH,
+		getTrip:        getH,
+		finishTrip:     finishH,
+		createPosition: positionH,
+		listPositions:  listPositionsH,
+		health:         healthH,
+	}
+
+	r := chi.NewRouter()
+	r.Use(middleware.Tracing())
+	r.Use(middleware.Logging(logger))
+	r.Use(middleware.Recover)
+	r.Use(httpMetrics)
+
+	return api.HandlerWithOptions(s, api.ChiServerOptions{
+		BaseRouter:       r,
+		ErrorHandlerFunc: paramError,
+	})
+}
+
+func paramError(w http.ResponseWriter, r *http.Request, err error) {
+	detail := "invalid request parameters"
+
+	var paramErr *api.InvalidParamFormatError
+	if errors.As(err, &paramErr) {
+		detail = paramErr.ParamName + " has invalid format"
+	}
+
+	domainerror.WriteInvalidRequest(w, r, detail)
+}

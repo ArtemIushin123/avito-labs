@@ -6,16 +6,23 @@ ifneq (,$(wildcard .env))
 endif
 export
 
-.PHONY: run build test lint generate migrate migrate-down migrate-reset
+COVER_PKGS := ./internal/usecase/...,./internal/domain/...
+
+.PHONY: run build test test-integration lint generate migrate migrate-down migrate-reset
 
 run:
-	go run ./cmd/trip-service
+	go run ./cmd/service
 
 build:
-	go build -o bin/trip-service ./cmd/trip-service
+	go build -ldflags "-X github.com/ArtemIushin123/template/internal/container.version=$(shell git describe --tags --always)" -o bin/trip-service ./cmd/service
 
 test:
-	go test -race -count=1 ./...
+	go test -race -count=1 -coverpkg=$(COVER_PKGS) -coverprofile=coverage.out ./...
+	@echo "Покрытие usecase + domain:"
+	@go tool cover -func=coverage.out | tail -n 1
+
+test-integration:
+	go test -race -count=1 -tags=integration ./...
 
 lint:
 	golangci-lint run ./...
@@ -23,10 +30,11 @@ lint:
 generate:
 	go tool oapi-codegen \
 		-generate types,chi-server \
-		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-include-operation-ids createTrip,getTrip,finishTrip,createTripPosition,listTripPositions,health,ready \
 		-package api \
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
+	go generate ./...
 
 migrate:
 	go tool goose -dir migrations postgres "$(DATABASE_URL)" up
