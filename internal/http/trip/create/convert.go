@@ -10,15 +10,13 @@ import (
 
 	"github.com/ArtemIushin123/template/internal/domain/trip"
 	"github.com/ArtemIushin123/template/internal/generated"
+	"github.com/ArtemIushin123/template/internal/http/requestbody"
 	"github.com/ArtemIushin123/template/internal/model"
 )
 
 var (
-	coordinateKeys = map[string]bool{"latitude": true, "longitude": true}
-	tripKeys       = map[string]bool{
-		"driver_id": true, "user_id": true, "start_point": true,
-		"end_point": true, "price": true,
-	}
+	coordinateKeys = []string{"latitude", "longitude"}
+	tripKeys       = []string{"driver_id", "user_id", "start_point", "end_point", "price"}
 )
 
 type coordinateRequest struct {
@@ -34,39 +32,20 @@ type tripRequest struct {
 	Price      *int64             `json:"price"`
 }
 
-func checkKeys(raw []byte, allowed map[string]bool) (map[string]json.RawMessage, error) {
-	var m map[string]json.RawMessage
-
-	if err := json.Unmarshal(raw, &m); err != nil {
-		var typeErr *json.UnmarshalTypeError
-		if errors.As(err, &typeErr) {
-			return nil, errors.New("must be a JSON object")
-		}
-		return nil, errors.New("malformed JSON")
-	}
-
-	for k := range m {
-		if !allowed[k] {
-			return nil, fmt.Errorf("unknown field %q", k)
-		}
-	}
-	return m, nil
-}
-
 func parseCreateTripRequest(body []byte) (*tripRequest, error) {
-	top, err := checkKeys(body, tripKeys)
+	top, err := requestbody.Object(body, tripKeys...)
 	if err != nil {
 		return nil, err
 	}
 
 	if raw, ok := top["start_point"]; ok {
-		if _, err := checkKeys(raw, coordinateKeys); err != nil {
+		if _, err := requestbody.Object(raw, coordinateKeys...); err != nil {
 			return nil, fmt.Errorf("start_point: %w", err)
 		}
 	}
 
 	if raw, ok := top["end_point"]; ok {
-		if _, err := checkKeys(raw, coordinateKeys); err != nil {
+		if _, err := requestbody.Object(raw, coordinateKeys...); err != nil {
 			return nil, fmt.Errorf("end_point: %w", err)
 		}
 	}
@@ -135,7 +114,7 @@ func toAPI(tr *trip.Trip) api.Trip {
 		Status:         api.TripStatus(tr.Status),
 		StartedAt:      tr.StartedAt.UTC(),
 		FinishedAt:     utcOrNil(tr.FinishedAt),
-		LastPositionAt: nil,
+		LastPositionAt: utcOrNil(tr.LastPositionAt),
 	}
 }
 

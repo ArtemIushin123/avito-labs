@@ -18,7 +18,7 @@ func toAPI(tr *trip.Trip) api.Trip {
 		Status:         api.TripStatus(tr.Status),
 		StartedAt:      tr.StartedAt.UTC(),
 		FinishedAt:     utcOrNil(tr.FinishedAt),
-		LastPositionAt: nil,
+		LastPositionAt: utcOrNil(tr.LastPositionAt),
 	}
 }
 

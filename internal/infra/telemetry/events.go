@@ -11,9 +11,10 @@ import (
 )
 
 type TripEvents struct {
-	logger    *slog.Logger
-	created   metric.Int64Counter
-	completed metric.Int64Counter
+	logger         *slog.Logger
+	created        metric.Int64Counter
+	completed      metric.Int64Counter
+	positionsSaved metric.Int64Counter
 }
 
 func NewTripEvents(logger *slog.Logger, meter metric.Meter) (*TripEvents, error) {
@@ -33,7 +34,15 @@ func NewTripEvents(logger *slog.Logger, meter metric.Meter) (*TripEvents, error)
 		return nil, fmt.Errorf("create tripgo.trips.completed counter: %w", err)
 	}
 
-	return &TripEvents{logger: logger, created: created, completed: completed}, nil
+	positionsSaved, err := meter.Int64Counter("tripgo.positions.saved", metric.WithUnit("{position}"))
+	if err != nil {
+		return nil, fmt.Errorf("create tripgo.positions.saved counter: %w", err)
+	}
+	return &TripEvents{logger: logger, created: created, completed: completed, positionsSaved: positionsSaved}, nil
+}
+
+func (e *TripEvents) PositionSaved(ctx context.Context) {
+	e.positionsSaved.Add(ctx, 1)
 }
 
 // TripCreated вызывается usecase после успешного коммита.

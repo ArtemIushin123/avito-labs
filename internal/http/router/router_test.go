@@ -28,6 +28,8 @@ import (
 	api "github.com/ArtemIushin123/template/internal/generated"
 	"github.com/ArtemIushin123/template/internal/http/health"
 	"github.com/ArtemIushin123/template/internal/http/middleware"
+	positioncreate "github.com/ArtemIushin123/template/internal/http/position/create"
+	positionlist "github.com/ArtemIushin123/template/internal/http/position/list"
 	"github.com/ArtemIushin123/template/internal/http/router"
 	"github.com/ArtemIushin123/template/internal/http/trip/create"
 	"github.com/ArtemIushin123/template/internal/http/trip/finish"
@@ -68,6 +70,16 @@ func (f *fakeUsecases) Create(_ context.Context, _ model.CreateTripInput) (*trip
 	return f.tripFor("Create", tripID), nil
 }
 
+func (f *fakeUsecases) CreatePosition(_ context.Context, in model.CreatePositionInput) (*trip.Position, error) {
+	f.called, f.gotID = "CreatePosition", in.TripID
+	return &trip.Position{ID: 1, TripID: in.TripID, Coordinates: in.Coordinates, RecordedAt: in.RecordedAt}, nil
+}
+
+func (f *fakeUsecases) ListPositions(_ context.Context, id uuid.UUID) ([]trip.Position, error) {
+	f.called, f.gotID = "ListPositions", id
+	return nil, nil
+}
+
 type fakePinger struct{}
 
 func (fakePinger) Ping(context.Context) error { return nil }
@@ -89,6 +101,8 @@ func newRouterWithMeter(uc *fakeUsecases, logger *slog.Logger, meter metric.Mete
 		create.New(uc),
 		get.New(uc),
 		finish.New(uc),
+		positioncreate.New(uc),
+		positionlist.New(uc),
 		health.New(fakePinger{}, time.Second),
 		logger,
 		httpMetrics,
@@ -116,6 +130,8 @@ func TestRouter_Routes(t *testing.T) {
 		{name: "health", method: http.MethodGet, path: "/health", wantStatus: http.StatusOK},
 		{name: "ready", method: http.MethodGet, path: "/ready", wantStatus: http.StatusOK},
 		{name: "create", method: http.MethodPost, path: tripsPath, body: validBody, wantStatus: http.StatusCreated, wantCall: "Create"},
+		{name: "route", method: http.MethodGet, path: tripsPath + "/" + tripID.String() + "/positions", wantStatus: http.StatusOK, wantCall: "ListPositions"},
+		{name: "position", method: http.MethodPost, path: tripsPath + "/" + tripID.String() + "/positions", body: `{"coordinates":{"latitude":0,"longitude":0},"recorded_at":"2026-08-24T12:00:05Z"}`, wantStatus: http.StatusCreated, wantCall: "CreatePosition"},
 		{name: "get", method: http.MethodGet, path: tripsPath + "/" + tripID.String(), wantStatus: http.StatusOK, wantCall: "GetByID"},
 		{name: "finish", method: http.MethodPost, path: tripsPath + "/" + tripID.String() + "/finish", wantStatus: http.StatusOK, wantCall: "Finish"},
 	}
@@ -140,7 +156,7 @@ func TestRouter_Routes(t *testing.T) {
 }
 
 func TestRouter_InvalidTripID(t *testing.T) {
-	for _, path := range []string{tripsPath + "/not-a-uuid", tripsPath + "/not-a-uuid/finish"} {
+	for _, path := range []string{tripsPath + "/not-a-uuid", tripsPath + "/not-a-uuid/finish", tripsPath + "/not-a-uuid/positions"} {
 		method := http.MethodGet
 		if strings.HasSuffix(path, "/finish") {
 			method = http.MethodPost

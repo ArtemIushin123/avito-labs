@@ -7,15 +7,16 @@ import (
 )
 
 type Trip struct {
-	ID         uuid.UUID
-	DriverID   uuid.UUID
-	UserID     uuid.UUID
-	Price      int64
-	Status     Status
-	StartPoint Coordinate
-	EndPoint   Coordinate
-	StartedAt  time.Time
-	FinishedAt *time.Time
+	ID             uuid.UUID
+	DriverID       uuid.UUID
+	UserID         uuid.UUID
+	Price          int64
+	Status         Status
+	StartPoint     Coordinate
+	EndPoint       Coordinate
+	StartedAt      time.Time
+	FinishedAt     *time.Time
+	LastPositionAt *time.Time
 }
 
 func New(id, driverID, userID uuid.UUID, price int64, startPoint, endPoint Coordinate, startedAt time.Time) (*Trip, error) {
@@ -29,10 +30,10 @@ func New(id, driverID, userID uuid.UUID, price int64, startPoint, endPoint Coord
 		return nil, &ValidationError{Field: "price", Message: "must not be negative"}
 	}
 	if !startPoint.isValid() {
-		return nil, &ValidationError{Field: "start_point", Message: "latitude must be in [-90, 90], longitude in [-180, 180]"}
+		return nil, &ValidationError{Field: "start_point", Message: coordinateRangeMessage}
 	}
 	if !endPoint.isValid() {
-		return nil, &ValidationError{Field: "end_point", Message: "latitude must be in [-90, 90], longitude in [-180, 180]"}
+		return nil, &ValidationError{Field: "end_point", Message: coordinateRangeMessage}
 	}
 
 	return &Trip{
@@ -64,6 +65,8 @@ const (
 	StatusActive    Status = "active"
 	StatusCompleted Status = "completed"
 )
+
+const coordinateRangeMessage = "latitude must be in [-90, 90], longitude in [-180, 180]"
 
 type Coordinate struct {
 	Latitude  float64

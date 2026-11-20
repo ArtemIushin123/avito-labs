@@ -20,6 +20,7 @@ type tripRow struct {
 	status         string
 	startedAt      time.Time
 	finishedAt     *time.Time
+	lastPositionAt *time.Time
 }
 
 var tripColumns = []string{
@@ -34,6 +35,7 @@ var tripColumns = []string{
 	"status",
 	"started_at",
 	"finished_at",
+	"last_position_at",
 }
 
 func (r *tripRow) scanTargets() []any {
@@ -49,6 +51,7 @@ func (r *tripRow) scanTargets() []any {
 		&r.status,
 		&r.startedAt,
 		&r.finishedAt,
+		&r.lastPositionAt,
 	}
 }
 
@@ -65,6 +68,7 @@ func (r tripRow) values() []any {
 		r.status,
 		r.startedAt,
 		r.finishedAt,
+		r.lastPositionAt,
 	}
 }
 
@@ -83,8 +87,9 @@ func toDomain(row tripRow) *trip.Trip {
 			Latitude:  row.endLatitude,
 			Longitude: row.endLongitude,
 		},
-		StartedAt:  row.startedAt,
-		FinishedAt: row.finishedAt,
+		StartedAt:      row.startedAt,
+		FinishedAt:     row.finishedAt,
+		LastPositionAt: row.lastPositionAt,
 	}
 }
 
@@ -101,5 +106,6 @@ func fromDomain(tr *trip.Trip) *tripRow {
 		status:         string(tr.Status),
 		startedAt:      tr.StartedAt,
 		finishedAt:     tr.FinishedAt,
+		lastPositionAt: tr.LastPositionAt,
 	}
 }

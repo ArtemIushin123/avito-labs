@@ -53,12 +53,17 @@ func TestTripEvents(t *testing.T) {
 	events.TripCreated(context.Background(), tr)
 	events.TripCreated(context.Background(), tr)
 	events.TripCompleted(context.Background(), tr)
+	events.PositionSaved(context.Background())
 
 	if got := counterValue(t, reader, "tripgo.trips.created"); got != 2 {
 		t.Errorf("tripgo.trips.created = %d, want 2", got)
 	}
 	if got := counterValue(t, reader, "tripgo.trips.completed"); got != 1 {
 		t.Errorf("tripgo.trips.completed = %d, want 1", got)
+	}
+
+	if got := counterValue(t, reader, "tripgo.positions.saved"); got != 1 {
+		t.Errorf("tripgo.positions.saved = %d, want 1", got)
 	}
 
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")

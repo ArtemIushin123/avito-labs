@@ -14,7 +14,7 @@ run:
 	go run ./cmd/service
 
 build:
-	go build -ldflags "-X main.version=$(shell git describe --tags --always)" -o bin/trip-service ./cmd/service
+	go build -ldflags "-X github.com/ArtemIushin123/template/internal/container.version=$(shell git describe --tags --always)" -o bin/trip-service ./cmd/service
 
 test:
 	go test -race -count=1 -coverpkg=$(COVER_PKGS) -coverprofile=coverage.out ./...
@@ -30,7 +30,7 @@ lint:
 generate:
 	go tool oapi-codegen \
 		-generate types,chi-server \
-		-include-operation-ids createTrip,getTrip,finishTrip,health,ready \
+		-include-operation-ids createTrip,getTrip,finishTrip,createTripPosition,listTripPositions,health,ready \
 		-package api \
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml

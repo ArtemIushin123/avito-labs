@@ -1,8 +1,8 @@
 # trip-service
 
-Сервис поездок TripGo, лабораторная работа 2: архитектура, качество кода и observability.
+Сервис поездок TripGo. Лабораторная работа 3: координаты, очередь и worker pool.
 
-Снаружи сервис умеет то же, что после работы 1: создать, получить и завершить поездку.
+Сервис создаёт, возвращает и завершает поездки, а также сохраняет координаты активной поездки и возвращает её маршрут.
 Внутри код разложен по слоям с зависимостями, направленными внутрь, покрыт unit- и
 интеграционными тестами, проходит `golangci-lint` и отдаёт логи, метрики и трейсы через
 OpenTelemetry. По одному запросу видно запись в логе, трейс в Jaeger и точку на графике в Grafana.
@@ -17,17 +17,39 @@ OpenTelemetry. По одному запросу видно запись в ло�
 
 ```bash
 tripgoctl cluster start          # один раз на машине
-tripgoctl environment start      # PostgreSQL + коллектор телеметрии, создаёт .env
+tripgoctl environment start      # PostgreSQL, телеметрия и Push Service; создаёт .env
 tripgoctl connect                # ссылки на Jaeger, Grafana, Prometheus
 make migrate                     # накатить миграции
 make run                         # запустить сервис
 ```
 
 Makefile читает переменные из `.env.example`, а затем из `.env` поверх него. `.env`
-создаёт `tripgoctl` при каждом `environment start`: из него берутся актуальные адреса БД
-и коллектора, а всё, чего в нём нет (`HTTP_*_TIMEOUT`, `OTEL_*`), — из `.env.example`.
+создаёт `tripgoctl` при каждом `environment start`. Из него берутся адреса БД, коллектора
+и Push Service. Интервалы опроса, число воркеров и размер очереди заданы в `.env.example`.
 Если запускать бинарь мимо `make`, экспортируйте оба файла по очереди: сначала
 `.env.example`, потом `.env`.
+
+## Опрос устаревших поездок
+
+Сканер → очередь → воркеры → Push Service.
+
+Сканер через `POSITION_CHECK_INTERVAL` (по умолчанию `30s`) выбирает из PostgreSQL
+активные поездки, по которым прошло больше `POSITION_STALE_AFTER` (по умолчанию
+`60s`) с последней координаты или начала поездки. Запрос отдаёт первыми поездки,
+которые дольше ждут координату. Частичный индекс из миграции `00004` хранит время
+последней координаты или начала только для активных поездок.
+
+В канале ждёт до `POSITION_QUEUE_SIZE` задач (по умолчанию `100`), запросы
+выполняют `POSITION_WORKERS` воркеров (по умолчанию `4`). При заполнении
+сканер регистрирует `dropped`, пишет предупреждение и продолжает обход. Если
+поездка всё ещё подходит для опроса, она снова попадёт в выборку на следующем тике.
+Поездка, которая уже ждёт или обрабатывается, второй раз не ставится. Успешно
+сохранённая координата отменяет ожидающую задачу.
+
+Воркер отправляет один HTTP-запрос на адрес из `PUSH_HTTP_URL` с таймаутом
+`PUSH_REQUEST_TIMEOUT` (по умолчанию `1s`). При остановке сервис дожидается
+текущих HTTP-запросов, останавливает сканер, даёт воркерам разобрать очередь
+и закрывает зависимости. Общий бюджет — `SHUTDOWN_TIMEOUT`.
 
 ## Цели Makefile
 
@@ -94,7 +116,7 @@ make test-integration
 | `HTTP_READ_HEADER_TIMEOUT` | таймаут чтения заголовков |
 | `HTTP_WRITE_TIMEOUT` | таймаут записи ответа |
 | `HTTP_IDLE_TIMEOUT` | таймаут простоя keep-alive соединения |
-| `SHUTDOWN_TIMEOUT` | общий бюджет на остановку: сервер, пул, сброс телеметрии |
+| `SHUTDOWN_TIMEOUT` | общий бюджет на остановку HTTP, сканера, воркеров и зависимостей |
 | `LOG_LEVEL` | уровень логов `slog` |
 | `DATABASE_URL` | строка подключения к PostgreSQL |
 | `DATABASE_MAX_CONNS`, `DATABASE_MIN_CONNS` | размер пула |
@@ -102,6 +124,12 @@ make test-integration
 | `DATABASE_CONNECT_TIMEOUT` | таймаут подключения, Ping на старте и в `/ready` |
 | `DATABASE_QUERY_TIMEOUT` | таймаут одного запроса в БД |
 | `DATABASE_TRANSACTION_TIMEOUT` | общий бюджет от ожидания соединения до коммита транзакции |
+| `POSITION_CHECK_INTERVAL` | как часто проверять поездки, по умолчанию `30s` |
+| `POSITION_STALE_AFTER` | после какого времени без координат поездка подходит для опроса, по умолчанию `60s` |
+| `POSITION_WORKERS` | число обработчиков запросов координат, по умолчанию `4` |
+| `POSITION_QUEUE_SIZE` | сколько задач может ждать обработки, по умолчанию `100` |
+| `PUSH_HTTP_URL` | базовый HTTP(S)-адрес Push Service, его записывает `tripgoctl` в `.env` |
+| `PUSH_REQUEST_TIMEOUT` | лимит времени на запрос координаты, по умолчанию `1s` |
 | `OTEL_SERVICE_NAME` | `service.name` в телеметрии и поле `service` в логах, по умолчанию `trip-service` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | адрес коллектора, приходит из `.env` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` или `http/protobuf` |
@@ -120,6 +148,8 @@ make test-integration
 | POST | `/api/v1/trips` | 201, 400, 409, 500 |
 | GET | `/api/v1/trips/{tripId}` | 200, 400, 404, 500 |
 | POST | `/api/v1/trips/{tripId}/finish` | 200, 400, 404, 409, 500 |
+| POST | `/api/v1/trips/{tripId}/positions` | 201, 400, 404, 409, 500 |
+| GET | `/api/v1/trips/{tripId}/positions` | 200, 400, 404, 500 |
 | GET | `/health` | 200 |
 | GET | `/ready` | 200, 503 |
 
@@ -135,16 +165,22 @@ cmd/service/main.go          читает конфиг, зовёт container.New
 internal/
   config/                    разбор и валидация env
   container/                 единственное место сборки: pgxpool.New, репозитории, usecase, хендлеры
-  domain/trip/               Trip, статусы, переход Finish, валидация, доменные ошибки
+  domain/trip/               Trip, Position, переход Finish, валидация, доменные ошибки
   model/                     входные структуры между транспортом и usecase
-  usecase/trip/{create,get,finish}/   сценарии; contract.go с интерфейсами зависимостей
+  usecase/
+    trip/{create,get,finish}/         создание, чтение и завершение поездки
+    position/{create,list}/           сохранение координаты и чтение маршрута
   http/
-    trip/{create,get,finish}/         хендлер на ручку, convert.go: api ↔ домен
+    trip/{create,get,finish}/         ручки поездок
+    position/{create,list}/           ручки координат; общий convert.go
+    requestbody/                     проверка допустимых ключей JSON
     health/                           /health и /ready
     domainerror/                      единый маппинг «ошибка → Problem»
     middleware/                       Recover, Tracing, Logging, Metrics
     router/                           chi + сгенерированный ServerInterface
-  repository/trip/           pgx + squirrel, ошибки pgx → доменные ошибки
+  repository/trip/           поездки, координаты, выборка устаревших; pgx + squirrel
+  worker/positions/          сканер, ограниченная очередь, фиксированный пул воркеров
+  gateway/push/              HTTP-клиент Push Service
   infra/
     postgres/                пул pgx с otelpgx
       transaction/           менеджер транзакций
@@ -168,7 +204,8 @@ migrations/
 - `http` знает `usecase` только через свои интерфейсы, плюс `domain` (для маппинга ошибок)
   и `generated`. В `repository` и `infra` не ходит.
 - `repository` знает `domain` и `infra/postgres/transaction` (достаёт транзакцию из контекста).
-- Конкретные типы встречаются друг с другом только в `container`.
+- `worker/positions` получает источник поездок и Push-гейтвей через свои интерфейсы.
+- Все зависимости собираются в `container`.
 
 Правила закреплены `depguard` в `.golangci.yml`: нарушение ломает `make lint`, а не
 только договорённость. Дополнительно можно проверить так:
@@ -186,9 +223,12 @@ go list -deps ./internal/domain/... | grep -E 'jackc/pgx|go-chi|net/http' && ech
   (`GetByIDForUpdate`, `Save`, `AddStatusHistory`); `usecase/trip/get` — `GetByID`.
 - `http/trip/*` объявляют интерфейс своего usecase (`tripCreator`, `tripGetter`,
   `tripFinisher`), `http/health` — `pinger`.
+- `usecase/position/create` объявляет репозиторий, менеджер транзакций, отмену
+  ожидающей задачи и событие сохранения. `usecase/position/list` — чтение поездки и точек.
+- `worker/positions` объявляет `staleTripSource`, `pushGateway`, тикер и события очереди и воркеров.
 
 Так каждый пакет описывает ровно то, что ему нужно: интерфейсы получаются узкими,
-мок на них маленький, а `repository/trip.Repository` удовлетворяет всем трём
+мок на них маленький, а `repository/trip.Repository` удовлетворяет нужным
 интерфейсам, ничего о них не зная. Когда в работе 4 появится gRPC, новый транспорт
 объявит такой же интерфейс usecase у себя и пойдёт в тот же usecase; usecase, домен и
 репозиторий не меняются, добавится только маппинг доменной ошибки в gRPC-код.
@@ -253,6 +293,13 @@ Tracing → Logging → Recover → Metrics → роутер
 | `db.client.operation.duration` | histogram, с | `db.system.name`, `db.operation.name`, `db.collection.name`, `error.type` | обёртка над `otelpgx` на уровне пула |
 | `tripgo.trips.created` | counter | — | `telemetry.TripEvents`, после коммита |
 | `tripgo.trips.completed` | counter | — | `telemetry.TripEvents`, после коммита |
+| `tripgo.trips.active` | gauge | — | Число активных поездок в PostgreSQL |
+| `tripgo.positions.saved` | counter | — | После успешного сохранения точки и обновления поездки |
+| `tripgo.stale_checks` | counter | `result` | Постановка в очередь (`queued`, `duplicate`, `dropped`) |
+| `tripgo.position_requests.queue.size` | gauge | — | Число задач в канале |
+| `tripgo.position_requests.workers.active` | gauge | — | Число занятых воркеров |
+| `tripgo.position_requests` | counter | `result` | Исход задач (`success`, `error`, `cancelled`) |
+| `tripgo.position_requests.duration` | histogram, с | `result` | Время вызова Push Service |
 
 В `http.route` кладётся только шаблон (`/api/v1/trips/{tripId}`). С `tripId` каждая поездка
 завела бы свою временную серию: кардинальность растёт без границ, Prometheus раздувается,
@@ -275,6 +322,9 @@ Tracing → Logging → Recover → Metrics → роутер
   (SQLSTATE для ошибок PostgreSQL).
   Инструментирование на уровне пула, а не в методах репозитория: ни один запрос не
   забудут обернуть, а репозиторий не зависит от телеметрии.
+- Сканер создаёт спан проверки. Спан обработки задачи имеет собственный корень
+  и связан с проверкой через span link. Вызов Push Service — отдельный дочерний
+  HTTP-спан; контекст передаётся заголовком `traceparent`.
 - Ошибка `5xx` помечает спан `codes.Error` и пишет `error.type`.
 - Контекст пробрасывается по `W3C TraceContext`.
 
@@ -302,7 +352,7 @@ curl -sS -X POST localhost:8080/api/v1/trips -H 'content-type: application/json'
 - Взять `trace_id` из записи `request handled` и найти по нему трейс в Jaeger.
 - Остановить коллектор — сервис продолжает отвечать, в логе `Warn` об экспорте.
 
-## Решения из работы 1
+## Решения реализации
 
 ### Уровень изоляции: Read Committed
 
@@ -352,11 +402,16 @@ CREATE UNIQUE INDEX idx_one_active_trip_per_driver ON trips (driver_id) WHERE st
 ### Graceful shutdown
 
 По `SIGINT`/`SIGTERM` один контекст на `SHUTDOWN_TIMEOUT` на всё завершение:
-`server.Shutdown` (по истечении — `Close`), затем закрытие пула, затем сброс
-телеметрии. Сервер останавливается раньше пула, потому что текущим запросам нужна БД.
+`server.Shutdown` (по истечении — `Close`), остановка сканера, доработка очереди
+воркерами, закрытие HTTP-клиента Push Service и пула БД, затем сброс телеметрии.
+Текущие HTTP-запросы завершаются до остановки фоновых компонентов и БД.
 Если бюджет кончился, в лог пишется `forced shutdown`, процесс выходит с кодом 1.
 
-## Известные упрощения
+## Упрощения лабораторной 3
 
-- Задание со звёздочкой (мутационное тестирование) не сделано.
-- Задания со звёздочкой из работы 1 (идемпотентность, Dockerfile) не сделаны.
+- Сканер читает все подходящие поездки одним запросом без `LIMIT`.
+- Очередь — FIFO-канал: порядок по давности сохраняется в пределах одного обхода.
+- Время отправки пуша не хранится. Повторная постановка возможна на следующем
+  тике после завершения предыдущей задачи, если свежая координата не пришла.
+- Отменённая ожидающая задача остаётся в канале до чтения воркером, но пуш не отправляет.
+- Задания со звёздочкой: выборка батчами и приоритетная очередь — не реализованы.
